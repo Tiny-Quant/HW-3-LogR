@@ -1,0 +1,940 @@
+---
+title: "Predicting Hotel Cancellations"
+author: "Art Tay"
+output: pdf_document
+header-includes:
+    - \usepackage{caption}
+format:
+  pdf:
+     documentclass: article
+     papersize: letter
+
+execute:
+  warning: false
+  message: false
+---
+\captionsetup[table]{labelfont = bf}
+\captionsetup[figure]{labelfont = bf}
+```{r setup, include = FALSE}
+##Setup code
+knitr::opts_chunk$set(warning = FALSE, message = FALSE)
+knitr::opts_knit$set(eval.after = "fig.cap")
+
+# Libraries
+library(magrittr)
+library(tidyverse)
+library(tidymodels)
+library(naniar)
+library(cutpointr)
+library(kableExtra)
+library(vip)
+library(MASS)
+library(ggpubr)
+library(DescTools)
+tidymodels_prefer()
+```
+
+```{r Parallel Setup, include = F}
+library(doParallel)
+library(tictoc)
+cl <- makePSOCKcluster(24)
+registerDoParallel(cl)
+```
+
+# Abstract
+Hotels are extremely interested in predicting room cancellations as
+utilized capacity is a key driver of revenue. Data originally complied
+by *Antonio et. Al, 2019*, on over 100,000 hotel bookings was appropriated
+to build several logistic regression models. The final model had a predictive
+accuracy on a held-out test set of 80.5%. In conjunction with exploratory
+data analysis inferences beyond prediction were drawn. First, although the
+data was complied from two different types of hotels, and single predictive model
+was more powerful than a split model. This applies that the same factors that
+predict cancellations at Resort hotel can be used for City hotel and possibly other
+types of hotels. Second, all the feature present in the dataset were found to
+be useful predictors. On a forward basis, hotels should consider collecting
+and maintain a similar database of customer data. Further investigation is
+required to identify exigent circumstances effect Portugal bookings during the
+fall of 2015 as well as the rational behind canceled bookings where a non-refundable
+deposit was made.
+
+# Introduction
+One of the primary concerns of a hotel is guests that end up canceling reservations.
+Cancelled reservations can dramatically impact revenue by reducing the overall
+utilization rate of rooms. *Antonio et Al., 2019*, collected bookings data from a
+resort hotel and a city hotel from a two year period. Over 100,000 bookings
+are represented in the dataset. The dataset contains categorical information
+about each booking such as the agent it was booked through, the date of arrival,
+and whether or not it was ultimately cancelled. The dataset also contained
+numeric information such as the number of previous cancellation a guest has
+made, and the number of guests on the bookings. Given the growing need to understand
+hotel cancellations, the goal of this analysis was to build a model that could
+predicted which books are most likely to be cancelled.
+
+\pagebreak
+
+# EDA
+```{r class imbalance tabulation, echo = F, fig.cap = caption}
+#| out.width = '60%',
+#| fig.align = 'center'
+load(file = "Figures/marimekko_plot.rds")
+caption <- "Number of bookings grouped by hotel type and cancellation status.
+            The height on each box represents the percentage of bookings
+            by cancellation status, and the width the percentage of bookings
+            made in each type of hotel."
+marimekko_plot
+```
+
+70% of the data was extract to conduct the exploratory data analysis as to not
+bias the final error rates. Based on this subset, the number of cancelled reservations
+is quite balanced with the number of uncancelled reservation. The figure above
+indicates that the data is more imbalance for Resort Hotels, but the ratio in
+neither class exceeds 4:1.
+
+```{r Figure 1, echo = F, fig.cap = caption}
+#| out.width = '60%',
+#| fig.align = 'center'
+load(file = "Figures/plots_tables.rds")
+caption <- "Percentage differences in means of numeric predictors
+  for Cancelled v. Uncancelled reservations. Percentages were calculated
+  relative to Cancelled reservations. Positive value indicate that the
+  mean value of the Cancelled group is greater than the mean of the
+  Uncancelled group."
+plot_1
+```
+
+The plot above clear demonstrates the that guests who have previously canceled
+a bookings are far more likely to cancel another. Guest that cancelled reservations
+had nearly 1,000% more previous cancellation than guests that checked-in. Less
+significant indicators of cancellation included a longer lead time and a greater
+number of days on the waiting list.
+
+On the contrary, guests that make special
+requests or require additional parking spaces are less likely to cancel.
+This may be caused by prepaid fee associated with these types of requests.
+Interesting the duration and type of day that booking covered did not
+differ between cancelled and uncanceled reservations. Long stay over
+a weekend seem just as likely to be cancelled as a short business trip during
+the week.
+
+```{r factor plot, echo = F, fig.cap = caption}
+#| out.width = '60%',
+#| fig.align = 'center'
+load("Figures/factor_plot.rds")
+caption <- "Percentage of different categories
+of bookings colored by cancellation status."
+factor_plot
+```
+
+Although many different types of bookings are represented in the data,
+there is little separation in proportion that get cancelled. Bookings in made
+Portugal are cancelled at a higher rate than any other country. The majority
+of these cancellation happened during the fall of 2015, which may indicate an
+event effected the country resulting cancellations; however, there were other
+time period with high rates of cancellations from Portugal. Strangely, the
+data seem to indicate that reservations that were made with a non-refundable
+deposit are more likely to be canceled. Smaller effects that can be seen
+on the above plot are that Groups are more likely to cancel, while, direct
+bookings are less likely to be cancelled.
+
+```{r Figure 2, echo = F, fig.cap = caption}
+#| out.width = '60%',
+#| fig.align = 'center'
+caption <- "Percentage differences in means of numeric predictors
+  for City v. Resort hotels. Percentages were calculated relative to
+  the City group. Positive values indicate that the mean value of the City
+  group is greater than the mean of the Resort group."
+plot_2
+```
+
+\pagebreak
+
+The plot above indicates that there is a much higher demand for City Hotels than
+there is for Resort Hotels as client spend almost 500% more time on the waiting
+list for City Hotels. This is probably a result of seasonality. City Hotels are
+used year around for business trips, whereas Resort Hotels are booking more
+infrequently. On the other hand, resort bookings tend to require more special
+accommodations.
+
+```{r factor plot hotel, echo = F, fig.cap = caption}
+#| out.width = '60%',
+#| fig.align = 'center'
+load("Figures/factor_plot_hotel.rds")
+caption <- "Percentage of different categories of bookings
+colored by type of hotel"
+factor_plot_hotel
+```
+Similar to the plot coded by cancellation status, Figure 5 indicates that
+although a variety of bookings types are represented in the data, there
+is very little separation on the basis of hotel.
+
+# Modeling Methodology
+The data was initially split into a training data set and a testing data set
+(70% and 30% of the raw data respectively). Although some factors had a NULL
+level, it was generally meaningful as opposed to missing. For example, the
+majority of the agent data was NULL, but this was taken to mean that the
+customer simply booked a hotel without using an agent.
+
+The `reservation_status`
+as well as `reservation_status_date` were both dropped from the feature space.
+The `reservation_status` variable was perfectly correlated with the outcome
+variable, the cancellation status, and therefore unlikely to be known prior
+to the actual cancellation. Although `reservation_status_date` is not perfectly
+correlated to the outcome, it is impossible to separate the intermediate
+status updates from the final outcome. The inclusion of this predictor in the
+model would most likely result in a high optimistic error rate.
+
+Additional,
+all factors were converted into $n-1$ dummy variables. Then, near-zero-variance
+predictor as well as highly correlated variables were dropped. Finally, all
+originally numeric variables were centered and scaled to promote computational
+stability.
+
+This data was then used to fit a standard logistic regression model,
+a penalized logistic regression model, and finally a split model based on hotel.
+The final model was selected on the basis of test set accuracy. Accuracy was
+calculated using the probability cut-point that maximized the kappa statistic
+on the training set for each given model. No models had Cook's Distance value
+greater than 1, therefore no observations were removed from the training sets
+of any of the models. Although regularization was applied, the optimal penalty
+was not significantly different from 0, and thus was unreported.
+
+\pagebreak
+
+# Results
+```{r, echo = F}
+load("Figures/table_5.rds")
+table_5_latex
+```
+The overall accuracy of the standard logistic regression model (combined model)
+was $0.815$. Model metrics were revaluate by hotel to make a direct comparison
+to the split model. Although, the metrics are close, the combined model
+dominates the split model in accuracy across both groups. This is mostly likely
+to the higher data utilization of the combined model. This might also be the
+result of the two hotels having a very similar distribution of features.
+
+```{r Figure 3, echo = F, fig.cap = caption}
+#| out.width = '70%',
+#| fig.align = 'center'
+load(file = "Figures/plot_4.rds")
+caption <- "Ten Most Important Variable for the Final Model"
+plot_4
+```
+
+Based on the variable importance plot, the most important categorical variable
+was country, and the most important numeric variable was the number of special
+requests. Based on the sign of the associated coefficients  bookings from
+Portugal were more likely to be cancel, while the more special requests a
+customer made the less likely they were to cancel (for a full list of
+model coefficients refer the the *Appendix*). Interesting various agent
+variables were flag as significant to the model despite the significant dispersion
+of agents with most having a low level of separation between the canceled and
+uncanceled bookings.
+
+# Conclusion
+The overall goal of this analysis was to produce a predictive model that could
+estimate the probability on a client cancelling a bookings with a high degree
+of accuracy. The ultimate model chosen as a standard logistic regression model.
+The final model had a test accuracy of 80.5%. During the exploratory data analysis
+the implication of several variables on the ultimate outcome were hypothesized.
+Many on these hypothesizes were consistent with the model coefficients. For
+example the model predicts a greater cancellation rate for customers with a
+high number of previous cancellations. There are two issues that may require
+further investigation. Firstly, there were a high number of cancellations
+from Portugal made during the fall of 2015. It is possible that this trend
+will continue into the future, but exigent circumstances should be identified
+to increase the applicability of the model on future data. Second, the data seems
+to indicate that bookings made with a non-refundable deposit are more likely to
+be canceled. This seems logical backwards, as it is usually the case that
+customers are less likely to forego a partial prepaid room.
+
+\pagebreak
+
+# Appendix - Additional Plots
+```{r, echo = F}
+load("Figures/model_1_coef.rds")
+model_1_coef
+```
+
+# Appendix - Code
+
+## Project Description
+
+* Perform an EDA – Brief EDA on that hotel booking data (city room vs. resort)
+* Build a logistic regression model if one would cancel a reservation or not
+* Check class imbalance
+* Provide an evaluation Metric
+* Show the feature needed any hot encoding
+
+## EDA
+* Slight class imbalance. Roughly 2:1 Uncancelled:Cancelled. Unlike to cause
+modeling problems.
+* Some variable difference identified between outcome classes.
+* Slight differences between variables between hotel groups. Most likely
+insufficient to justify separate models.
+
+```{r load Data}
+data_full <- read_csv(file = "hotel_bookings.csv")
+```
+
+```{r check data}
+#| eval: false
+str(data_full)
+glimpse(data_full)
+```
+
+### Data Cleaning
+```{r Train Test Split}
+# Train-Test Split (70/30)
+set.seed(123)
+data_split <- initial_split(data_full, prop = 0.7)
+
+train <- training(data_split)
+test <- testing(data_split)
+```
+
+```{r Initialized Recipe}
+# start a recipe
+cleaning_recipe <- train %>%
+                   recipe(is_canceled ~ .)
+```
+
+```{r Data Type Coding}
+# Change all character variables to factors.
+cleaning_recipe %<>%
+  step_mutate(across(where(is.character), as.factor))
+
+# Change outcome variable to be a factor.
+cleaning_recipe %<>%
+    step_mutate(is_canceled = as.factor(is_canceled), skip = T)
+
+# Change month string to corresponding month number
+cleaning_recipe %<>%
+    step_mutate(arrival_date_month = match(arrival_date_month, month.name))
+
+# Change arrival (date) variables to factors.
+cleaning_recipe %<>%
+    step_mutate_at(starts_with("arrival"), fn = as.factor)
+
+# Change is_repeated_guest to be a factor variable.
+cleaning_recipe %<>%
+    step_mutate(is_repeated_guest = as.factor(is_repeated_guest))
+```
+
+```{r intermediate bake}
+#| include = F
+cleaning_recipe_prepped <- cleaning_recipe %>% prep(retain = T, verbose = T)
+train_clean <- bake(cleaning_recipe_prepped, new_data = NULL)
+str(train_clean)
+```
+
+```{r missing values, include = F}
+miss_count <- sapply(train_clean, FUN = function(x) {sum(is.na(x))})
+```
+
+### Tables
+```{r EDA tables 1 and 2}
+mean_not <- train_clean %>% filter(is_canceled == 0) %>%
+                           summarise(across(where(is.numeric), mean)) %>%
+                           round(digits = 2)
+
+mean_canceled <- train_clean %>% filter(is_canceled == 1) %>%
+                           summarise(across(where(is.numeric), mean)) %>%
+                           round(digits = 2)
+
+table_1 <- as.data.frame(t(rbind(mean_canceled, mean_not)))
+colnames(table_1) <- c("Uncancelled", "Cancelled")
+table_1 %<>% mutate("%_Diff" = round(Uncancelled / Cancelled - 1, 2))
+
+table_2 <- train_clean %>%
+           group_by(is_canceled) %>%
+           summarize(across(where(is.factor), Mode)) %>%
+           t() %>% as.data.frame()
+
+colnames(table_2) <- c("Uncancelled", "Cancelled")
+
+table_2 %<>% filter(Uncancelled != Cancelled)
+```
+
+```{r EDA tables 3 and 4}
+mean_city <- train_clean %>% filter(hotel == "City Hotel") %>%
+                           summarise(across(where(is.numeric), mean)) %>%
+                           round(digits = 2)
+
+mean_resort <- train_clean %>% filter(hotel == "Resort Hotel") %>%
+                           summarise(across(where(is.numeric), mean)) %>%
+                           round(digits = 2)
+
+table_3 <- as.data.frame(t(rbind(mean_city, mean_resort)))
+colnames(table_3) <- c("City", "Resort")
+table_3 %<>% mutate("%_Diff" = round(City / Resort - 1, 2))
+
+table_4 <- train_clean %>% group_by(hotel) %>%
+                           summarize(across(where(is.factor), Mode)) %>%
+                           t() %>% as.data.frame()
+
+colnames(table_4) <- c("City", "Resort")
+
+table_4 %<>% filter(City != Resort)
+```
+
+```{r Marimekko Plot}
+marimekko_data <- train_clean %>%
+                  # 2 by 2 count table
+                  count(hotel, is_canceled) %>%
+                  group_by(hotel) %>%
+                  # percentage of cancelled in each hotel group
+                  mutate(Percent_row = n * 100 / sum(n), n = NULL) %>%
+                  pivot_wider(names_from = is_canceled,
+                              values_from = Percent_row) %>%
+                  ungroup() %>%
+                  # Percent each hotel of the entire dataset
+                  mutate(Percent_col = c(sum(`0`), sum(`1`))) %>%
+                  # Define xmax and xmin for rectangle plots
+                  mutate(Percent_col = Percent_col * 100 / sum(Percent_col)) %>%
+                  mutate(xmax = cumsum(Percent_col),
+                         xmin = xmax - Percent_col) %>%
+                  pivot_longer(col = c(`0`, `1`)) %>%
+                  # Define ymax and ymin for rectangle plots
+                  group_by(hotel) %>%
+                  mutate(ymax = cumsum(value), ymin = ymax - value) %>%
+                  # Define text positions for labels
+                  mutate(xtext = xmin + (xmax - xmin) / 2,
+                         ytext = ymin + (ymax - ymin) / 2) %>%
+                  mutate(name = ifelse(name == 0, "Uncancelled", "Cancelled")) %>%
+                  ungroup()
+
+#marimekko_data
+
+# 2 by 2 counts for labels
+counts <- train_clean %>% count(hotel, is_canceled) %>% select(n)
+
+marimekko_plot <- marimekko_data %>% mutate(counts = counts$n) %>%
+ggplot(
+  aes(ymin = ymin, ymax = ymax, xmin = xmin, xmax = xmax, fill = name)
+) + geom_rect(col = I("grey")) +
+    geom_text(aes(x = xtext, y = ytext,
+              label = scales::comma(counts))) +
+    geom_text(aes(x = xtext, y = 103, label = hotel), size = 4) +
+    labs(x = "Percentage of Bookings by Hotel",
+         y = "Percentage of Bookings by Cancellation Status",
+         fill = "") +
+    theme_bw() +
+    theme(legend.position = "bottom")
+
+marimekko_plot
+
+save(file = "Figures/marimekko_plot.rds", marimekko_plot)
+```
+
+```{r Factor Plot by Cancelled}
+train_factor_plots <- train_clean %>%
+                      select(is_canceled, is_repeated_guest, customer_type,
+                             deposit_type,
+                             distribution_channel,
+                             market_segment,
+                             country)
+
+counts_by_level <- function(colname){
+  train_factor_plots %>% group_by(is_canceled) %>%
+                  count(!!as.name(colname)) %>%
+                  mutate(Percent = n * 100 / sum(n)) %>%
+                  mutate(Factor = colname) %>%
+                  rename(Level = !!as.name(colname)) %>%
+                  arrange(desc(Percent)) %>%
+                  slice(1:4)
+}
+
+names <- colnames(train_factor_plots %>% select(-is_canceled))
+
+train_factor_plot_data <- do.call("rbind", lapply(names, FUN = counts_by_level))
+
+factor_plot <- ggplot(data = train_factor_plot_data,
+  aes(x = reorder(Level, -Percent), y = Percent, fill = is_canceled)) +
+  geom_bar(stat = "identity", position = "dodge") +
+  facet_wrap(vars(Factor), scales = "free_x") +
+  theme_bw() +
+  labs(x = "") +
+  scale_x_discrete(guide = guide_axis(n.dodge = 2)) +
+  scale_fill_discrete(labels = c("Uncanceled", "Canceled")) +
+  theme(legend.title = element_blank(), legend.position = "bottom")
+
+factor_plot
+```
+
+```{r, check PRT}
+train_clean %>% select(arrival_date_year,
+  arrival_date_month, country, is_canceled) %>%
+  filter(country == "PRT" & is_canceled == 1) %>%
+  count(arrival_date_year, arrival_date_month) %>%
+  arrange(desc(n)) %>% print(n = 26)
+```
+
+```{r Factor Plot by hotel}
+train_factor_plots <- train_clean %>%
+                      select(is_repeated_guest, customer_type,
+                             deposit_type, hotel,
+                             distribution_channel,
+                             market_segment,
+                             country)
+
+counts_by_level_hotel <- function(colname){
+  train_factor_plots %>% group_by(hotel) %>%
+                  count(!!as.name(colname)) %>%
+                  mutate(Percent = n * 100 / sum(n)) %>%
+                  mutate(Factor = colname) %>%
+                  rename(Level = !!as.name(colname)) %>%
+                  arrange(desc(Percent)) %>%
+                  slice(1:4)
+}
+
+names <- colnames(train_factor_plots %>% select(-hotel))
+
+train_factor_plot_hotel <- do.call("rbind",
+  lapply(names, FUN = counts_by_level_hotel))
+
+factor_plot_hotel <- ggplot(data = train_factor_plot_hotel,
+  aes(x = reorder(Level, -Percent), y = Percent, fill = hotel)) +
+  geom_bar(stat = "identity", position = "dodge") +
+  facet_wrap(vars(Factor), scales = "free_x") +
+  theme_bw() +
+  labs(x = "") +
+  scale_x_discrete(guide = guide_axis(n.dodge = 2)) +
+  theme(legend.title = element_blank(), legend.position = "bottom")
+
+factor_plot_hotel
+```
+
+```{r}
+save(file = "Figures/factor_plot.rds", factor_plot)
+save(file = "Figures/factor_plot_hotel.rds", factor_plot_hotel)
+```
+
+```{r Check reservation_status, eval = F}
+train_clean %>% group_by(is_canceled, reservation_status) %>%
+                summarise(n = n())
+train_test_perfect <- train_clean %>% select(is_canceled, reservation_status)
+
+library(fastDummies)
+train_test_perfect %<>% dummy_cols(remove_first_dummy = T,
+                                   remove_selected_columns = T)
+
+test_glm <- glm(is_canceled_1~ ., family = binomial,
+                    data = train_test_perfect)
+
+train_test_perfect$pred <- predict(test_glm, type = "response")
+train_test_perfect %<>% mutate(pred = ifelse(pred >= 0.5, 1, 0))
+
+train_test_perfect %>% ggplot(
+  aes(x = is_canceled_1, y = pred, col = "blue")
+) + geom_point()
+```
+
+### Plots
+```{r Plot 1}
+plot_1 <- table_1 %>%
+   mutate("variables" = rownames(.), "diff" = `%_Diff` * 100) %>%
+   filter(variables != "children") %>%
+  ggplot(
+    aes(x = diff, y = variables, fill = variables)
+  ) + geom_bar(stat = 'identity') +
+      xlim(-100, 960) +
+      labs(y = "", x = "Percent Difference in Means") +
+      theme_bw() + theme(legend.position = "none",
+                         axis.text.x = element_text(hjust = 1))
+plot_1
+```
+
+```{r plot 2}
+plot_2 <- table_3 %>%
+   mutate("variables" = rownames(.), "diff" = `%_Diff` * 100) %>%
+   filter(variables != "children") %>%
+  ggplot(
+    aes(x = diff, y = variables, fill = variables)
+  ) + geom_bar(stat = 'identity') +
+      labs(y = "", x = "Percent Difference in Means") +
+      theme_bw() + theme(legend.position = "none")
+
+plot_2
+```
+
+```{r table 2 formatting}
+caption <- "Factor modes of Cancelled v. Uncancelled reservations"
+table_2_latex <- table_2 %>%
+  kbl(format = 'latex', booktab = T, longtable = T, caption = caption,
+    linesep = "", escape = T) %>%
+    kable_styling(full_width = F)
+```
+
+```{r table 4 formatting}
+caption <- "Factor modes of City v. Resort hotels"
+table_4_latex <- table_4 %>%
+  kbl(format = 'latex', booktab = T, longtable = T, caption = caption,
+    linesep = "", escape = T) %>%
+    kable_styling(full_width = F)
+```
+
+```{r output for report use, include = F}
+save(file = "Figures/plots_tables.rds",
+  list = c("plot_1", "plot_2", "table_2_latex", "table_4_latex"))
+```
+
+## Model Fitting
+```{r Model Specific Preprocessing}
+# Guard against multicollinearity and overfitting.
+# Not concerned about normality of skewness for logistic regression.
+cleaning_recipe %<>% step_rm(reservation_status, reservation_status_date) %>%
+                     step_dummy(all_nominal_predictors()) %>%
+                     step_nzv(all_predictors()) %>%
+                     step_corr(all_numeric_predictors()) %>%
+                     step_normalize(all_numeric_predictors())
+```
+
+### Model 1
+```{r Define Model Workflow}
+log_Reg_mod <- logistic_reg() %>% set_engine("glm")
+
+log_Reg_wflow <- workflow() %>%
+                 add_model(log_Reg_mod) %>%
+                 add_recipe(cleaning_recipe)
+
+log_Reg_wflow
+```
+
+```{r Model 1 Fit}
+# Saved and reloaded as rds to save runtime.
+#log_Reg_fit <- log_Reg_wflow %>%
+               #fit(data = train)
+```
+
+```{r save and load fit, include = F}
+#save(file = "Figures/log_Reg_fit.rds", log_Reg_fit)
+load("Figures/log_Reg_fit.rds")
+```
+
+```{r Model Summary}
+log_Reg_glm <- log_Reg_fit %>% extract_fit_parsnip()
+
+#summary(log_Reg_glm)
+
+#par(mfrow = c(2, 2))
+#plot(log_Reg_glm$fit)#, which = c(1,2))
+```
+
+```{r Influential Plot Analysis, eval = F}
+Id <- 1:length(train$hotel)
+Leverage <- hatvalues(log_Reg_glm$fit)
+StudRes <- studres(log_Reg_glm$fit)
+CookD <- cooks.distance(log_Reg_glm$fit)
+
+inful_data <- cbind(Id, Leverage, StudRes, CookD)
+inful_data <- as.data.frame(inful_data)
+
+##Plots
+##Leverage
+lev <- ggplot(data = inful_data, aes(x = Id, y = Leverage)) + geom_point() +
+            geom_hline(yintercept = 2 * length(log_Reg_glm$fit$coefficients) /
+                length(inful_data$Id), col = "red") +
+            labs(x = "Index") +
+            theme_bw()
+
+##Studentized Residuals
+studres <- ggplot(data = inful_data, aes(x = Id, y = StudRes)) + geom_point() +
+                geom_hline(yintercept = 2, col = "red") +
+                geom_hline(yintercept = -2, col = "red") +
+                labs(y = "Studentized Residuals", x = "Index") +
+                theme_bw()
+
+##Cooks distance
+cooks <- ggplot(data = inful_data, aes(x = Id, y = CookD)) + geom_point() +
+             geom_hline(yintercept = 1, col = "red") +
+             labs(y = "Cook's Distance", x = "Index") +
+             theme_bw()
+
+inful <- ggarrange(lev, studres, cooks, ncol = 3, nrow = 1)
+
+inful <- annotate_figure(inful, top = text_grob("Influential Point Analysis"))
+
+inful
+
+save(inful, file = "Figures/inful.rds")
+```
+
+### Model 2 (Remove Outliers)
+```{r Check Cooks Distances, eval = F}
+train_2 <- train %>%
+    mutate(m1cooksD = cooks.distance(log_Reg_glm$fit))
+dim(train_2)
+train_2 %<>% filter(m1cooksD < 1)
+```
+
+### Model 3 (Split Model)
+```{r Data Subset for Split Model}
+# Define data splits
+train_city <- train %>% filter(hotel == "City Hotel")
+train_resort <- train %>% filter(hotel == "Resort Hotel")
+test_city <- test %>% filter(hotel == "City Hotel")
+test_resort <- test %>% filter(hotel == "Resort Hotel")
+```
+
+```{r Update workflow for model 3}
+recipe_3 <- cleaning_recipe
+rm_hotel <- train %>% recipe(formula = is_canceled ~ . ) %>%
+                      step_rm(hotel)
+recipe_3$steps <- append(recipe_3$steps, list(rm_hotel$steps[[1]]), after = 6)
+
+model_3_wflow <- workflow() %>%
+                  add_model(log_Reg_mod) %>%
+                  add_recipe(recipe_3)
+```
+
+```{r Model 3 Fits, cache = T}
+model_3_fit_city <- model_3_wflow %>% fit(data = train_city)
+model_3_fit_resort <- model_3_wflow %>% fit(data = train_resort)
+```
+
+### Model 4 (Penalized)
+```{r Model 4 Tunning}
+# penalty = lambda
+# mixture = alpha
+# Define elastic net model.
+pen_log_mod <- logistic_reg(penalty = tune(), mixture = tune()) %>%
+               set_engine("glmnet")
+
+# Define resampling method for hyperparameter tunning.
+resamples <- train %>% vfold_cv(v = 10, repeats = 2)
+
+# Define grid of parameters to test.
+param_grid <- grid_regular(penalty(), mixture(),
+                           levels = list(penalty = 100,
+                                         mixture = 10))
+
+model_4_wflow <- workflow() %>%
+                 add_model(pen_log_mod) %>%
+                 add_recipe(cleaning_recipe)
+#tic()
+#model_4_fit <- model_4_wflow %>%
+               #tune_grid(resamples = resamples, grid = param_grid,
+                         #metrics = metric_set(roc_auc))
+#toc()
+# model fit was saved an reloaded as a rds to save runtime.
+```
+
+```{r model 4 save and reload, include = F}
+#save(file = "Figures/model_4_fit.rds", model_4_fit)
+load("Figures/model_4_fit.rds")
+```
+
+```{r Exact Tunning Parameters}
+model_4_best_params <- select_best(model_4_fit)
+```
+
+## Model Predictions and Evaluation
+### Model 1
+```{r Model 1 Train, cache = T}
+model_1_train <- predict(log_Reg_fit, new_data = train, type = "prob")[2]
+model_1_train$obs <- train$is_canceled
+model_1_cut <- model_1_train %>%
+  cutpointr(x = .pred_1, class = obs,
+            method = maximize_metric, metric = cohens_kappa,
+            pos_class = 1, direction = ">=")
+model_1_train %<>%
+  mutate(pred.class = ifelse(.pred_1 >= model_1_cut$optimal_cutpoint, 1, 0)) %>%
+  mutate(obs = as.factor(obs), pred.class = as.factor(pred.class))
+
+
+model_1_train_cmat <- model_1_train %>%
+    conf_mat(truth = obs, estimate = pred.class)
+
+model_1_train_metrics <- summary(model_1_train_cmat)
+```
+
+```{r Model 1 Test, cache = T}
+model_1_test <- predict(log_Reg_fit, new_data = test, type = "prob")[2]
+model_1_test$obs <- test$is_canceled
+
+model_1_test %<>%
+  mutate(pred.class = ifelse(.pred_1 >= model_1_cut$optimal_cutpoint, 1, 0)) %>%
+  mutate(obs = as.factor(obs), pred.class = as.factor(pred.class))
+
+
+model_1_test_cmat <- model_1_test %>%
+    conf_mat(truth = obs, estimate = pred.class)
+
+summary(model_1_test_cmat)
+```
+
+```{r Model 1 by Hotel, cache = T}
+model_1_train %<>% mutate(hotel = train$hotel)
+model_1_test %<>% mutate(hotel = test$hotel)
+
+model_1_train_city <- model_1_train %>% filter(hotel == "City Hotel")
+model_1_test_city <- model_1_test %>% filter(hotel == "City Hotel")
+model_1_train_resort <- model_1_train %>% filter(hotel == "Resort Hotel")
+model_1_test_resort <- model_1_test %>% filter(hotel == "Resort Hotel")
+
+
+model_1_train_cmat_city <- model_1_train_city %>%
+    conf_mat(truth = obs, estimate = pred.class)
+model_1_train_metrics_city <- summary(model_1_train_cmat_city)
+
+model_1_test_cmat_city <- model_1_test_city %>%
+    conf_mat(truth = obs, estimate = pred.class)
+model_1_test_metrics_city <- summary(model_1_test_cmat_city)
+
+model_1_train_cmat_resort <- model_1_train_resort %>%
+    conf_mat(truth = obs, estimate = pred.class)
+model_1_train_metrics_resort <- summary(model_1_train_cmat_resort)
+
+model_1_test_cmat_resort <- model_1_test_resort %>%
+    conf_mat(truth = obs, estimate = pred.class)
+model_1_test_metrics_resort <- summary(model_1_test_cmat_resort)
+```
+
+### Model 3
+```{r Model 3 Train, cache = T}
+model_3_train_city <- predict(model_3_fit_city,
+    new_data = train_city, type = "prob")[2]
+
+model_3_train_city$obs <- train_city$is_canceled
+
+model_3_cut <- model_3_train_city %>%
+  cutpointr(x = .pred_1, class = obs,
+            method = maximize_metric, metric = cohens_kappa,
+            pos_class = 1, direction = ">=")
+
+model_3_train_city %<>%
+  mutate(pred.class = ifelse(.pred_1 >= model_1_cut$optimal_cutpoint, 1, 0)) %>%
+  mutate(obs = as.factor(obs), pred.class = as.factor(pred.class))
+
+model_3_train_city_cmat <- model_3_train_city %>%
+    conf_mat(truth = obs, estimate = pred.class)
+
+model_3_train_city_metrics <- summary(model_3_train_city_cmat)
+
+model_3_train_resort <- predict(model_3_fit_resort,
+    new_data = train_resort, type = "prob")[2]
+
+model_3_train_resort$obs <- train_resort$is_canceled
+
+model_3_cut <- model_3_train_resort %>%
+  cutpointr(x = .pred_1, class = obs,
+            method = maximize_metric, metric = cohens_kappa,
+            pos_class = 1, direction = ">=")
+model_3_train_resort %<>%
+  mutate(pred.class = ifelse(.pred_1 >= model_1_cut$optimal_cutpoint, 1, 0)) %>%
+  mutate(obs = as.factor(obs), pred.class = as.factor(pred.class))
+
+model_3_train_resort_cmat <- model_3_train_resort %>%
+    conf_mat(truth = obs, estimate = pred.class)
+
+model_3_train_resort_metrics <- summary(model_3_train_resort_cmat)
+```
+
+```{r Model 3 Test, cache = T}
+model_3_test_city <- predict(model_3_fit_city,
+                              new_data = test_city, type = "prob")[2]
+model_3_test_city$obs <- test_city$is_canceled
+
+model_3_test_city %<>%
+  mutate(pred.class = ifelse(.pred_1 >= model_1_cut$optimal_cutpoint, 1, 0)) %>%
+  mutate(obs = as.factor(obs), pred.class = as.factor(pred.class))
+
+model_3_test_city_cmat <- model_3_test_city %>%
+    conf_mat(truth = obs, estimate = pred.class)
+
+model_3_test_city_metrics <- summary(model_3_test_city_cmat)
+
+model_3_test_resort <- predict(model_3_fit_resort,
+                              new_data = test_resort, type = "prob")[2]
+model_3_test_resort$obs <- test_resort$is_canceled
+
+model_3_test_resort %<>%
+  mutate(pred.class = ifelse(.pred_1 >= model_1_cut$optimal_cutpoint, 1, 0)) %>%
+  mutate(obs = as.factor(obs), pred.class = as.factor(pred.class))
+
+model_3_test_resort_cmat <- model_3_test_resort %>%
+    conf_mat(truth = obs, estimate = pred.class)
+
+model_3_test_resort_metrics <- summary(model_3_test_resort_cmat)
+```
+
+## More Figures
+```{r table 5}
+table_5 <- cbind(model_1_train_metrics_city$.estimate,
+                 model_1_test_metrics_city$.estimate,
+                 model_1_train_metrics_resort$.estimate,
+                 model_1_test_metrics_resort$.estimate,
+                 model_3_train_city_metrics$.estimate,
+                 model_3_test_city_metrics$.estimate,
+                 model_3_train_resort_metrics$.estimate,
+                 model_3_test_resort_metrics$.estimate)
+
+table_5 <- as.data.frame(table_5) %>% slice(1:6)
+
+rownames(table_5) <- c("Accuracy", "Kappa", "Sensitivity", "Specificity",
+                       "PPV", "NPV")
+
+colnames(table_5) <- c("Train", "Test",
+                       "Train", "Test",
+                       "Train", "Test",
+                       "Train", "Test")
+
+
+caption <- "Summary of model metrics"
+
+table_5_latex <- table_5 %>%
+  kbl(format = "latex", booktabs = T, longtable = T, caption = caption,
+    linesep = "", escape = T, digits = 4) %>%
+    kable_styling(full_width = F) %>%
+    add_header_above(c(" ", "City" = 2, "Resort" = 2,
+                            "City" = 2, "Resort" = 2)) %>%
+    add_header_above(c(" ", "Combined Model" = 4, "Split Model" = 4))
+
+table_5_latex
+
+save(file = "Figures/table_5.rds", table_5_latex)
+```
+
+```{r Variable Importance Plot}
+# Variable Importance
+plot_4 <- log_Reg_glm %>%
+          vip(num_features = 10) %+%
+          aes(x = reorder(Variable, Importance), y = Importance,
+              fill = Importance) +
+          scale_fill_gradient() +
+          labs(x = "") +
+          theme_bw() + theme(legend.position = "none")
+
+plot_4
+
+save(file = "Figures/plot_4.rds", plot_4)
+```
+
+```{r Model 1 Coefficients}
+caption <- "Final Model Coefficients"
+model_1_coef <- log_Reg_glm %>% tidy()
+# Fixes a latex table issue
+model_1_coef$term[1] <- "Intercept"
+model_1_coef %<>%
+    kbl(format = "latex", booktabs = T, longtable = T, caption = caption,
+      linesep = "", escape = T, digits = 3) %>%
+      kable_styling(full_width = F)
+
+model_1_coef
+
+save(file = "Figures/model_1_coef.rds", model_1_coef)
+```
+
+```{r Roc Plots, eval = F}
+model_1_roc <- layer_data(plot_roc(model_1_cut), 2) %>%
+               select(x, y) %>% mutate(Model = "Model 1 Full")
+
+model_1_roc <- layer_data(plot_roc(model_1_cut), 2) %>%
+               select(x, y) %>% mutate(Model = "Model 1 Full")
+
+```
+
+```{r End Cluster, include = F}
+stopCluster(cl)
+```
