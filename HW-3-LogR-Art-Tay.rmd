@@ -42,19 +42,19 @@ registerDoParallel(cl)
 ```
 
 # Abstract
-Hotels are extremely interested in predicting room cancellations as
+Hotels are extremely interested in predicting room cancellations, as
 utilized capacity is a key driver of revenue. Data originally complied
 by *Antonio et. Al, 2019*, on over 100,000 hotel bookings was appropriated
 to build several logistic regression models. The final model had a predictive
-accuracy on a held-out test set of 80.5%. In conjunction with exploratory
+accuracy on a held-out test set of 81.5%. In conjunction with exploratory
 data analysis inferences beyond prediction were drawn. First, although the
 data was complied from two different types of hotels, and single predictive model
-was more powerful than a split model. This applies that the same factors that
-predict cancellations at Resort hotel can be used for City hotel and possibly other
+was more powerful than a split model. This implies that the same factors that
+predict cancellations at Resort hotels can be used for City hotels and possibly other
 types of hotels. Second, all the feature present in the dataset were found to
 be useful predictors. On a forward basis, hotels should consider collecting
-and maintain a similar database of customer data. Further investigation is
-required to identify exigent circumstances effect Portugal bookings during the
+and maintaining a similar database of customer data. Further investigation is
+required to identify exigent circumstances effecting Portugal bookings during the
 fall of 2015 as well as the rational behind canceled bookings where a non-refundable
 deposit was made.
 
@@ -62,14 +62,14 @@ deposit was made.
 One of the primary concerns of a hotel is guests that end up canceling reservations.
 Cancelled reservations can dramatically impact revenue by reducing the overall
 utilization rate of rooms. *Antonio et Al., 2019*, collected bookings data from a
-resort hotel and a city hotel from a two year period. Over 100,000 bookings
+resort hotel and a city hotel over a two year period. Over 100,000 bookings
 are represented in the dataset. The dataset contains categorical information
 about each booking such as the agent it was booked through, the date of arrival,
 and whether or not it was ultimately cancelled. The dataset also contained
 numeric information such as the number of previous cancellation a guest has
 made, and the number of guests on the bookings. Given the growing need to understand
 hotel cancellations, the goal of this analysis was to build a model that could
-predicted which books are most likely to be cancelled.
+predicted which bookings are most likely to be cancelled.
 
 \pagebreak
 
@@ -80,7 +80,7 @@ predicted which books are most likely to be cancelled.
 load(file = "Figures/marimekko_plot.rds")
 caption <- "Number of bookings grouped by hotel type and cancellation status.
             The height on each box represents the percentage of bookings
-            by cancellation status, and the width the percentage of bookings
+            by cancellation status, while the width represents the percentage of bookings
             made in each type of hotel."
 marimekko_plot
 ```
@@ -88,7 +88,7 @@ marimekko_plot
 70% of the data was extract to conduct the exploratory data analysis as to not
 bias the final error rates. Based on this subset, the number of cancelled reservations
 is quite balanced with the number of uncancelled reservation. The figure above
-indicates that the data is more imbalance for Resort Hotels, but the ratio in
+indicates that the data is more imbalanced for Resort Hotels, but the ratio in
 neither class exceeds 4:1.
 
 ```{r Figure 1, echo = F, fig.cap = caption}
@@ -103,7 +103,7 @@ caption <- "Percentage differences in means of numeric predictors
 plot_1
 ```
 
-The plot above clear demonstrates the that guests who have previously canceled
+The plot above clearly demonstrates the that guests who have previously canceled
 a bookings are far more likely to cancel another. Guest that cancelled reservations
 had nearly 1,000% more previous cancellation than guests that checked-in. Less
 significant indicators of cancellation included a longer lead time and a greater
@@ -112,8 +112,8 @@ number of days on the waiting list.
 On the contrary, guests that make special
 requests or require additional parking spaces are less likely to cancel.
 This may be caused by prepaid fee associated with these types of requests.
-Interesting the duration and type of day that booking covered did not
-differ between cancelled and uncanceled reservations. Long stay over
+Interestingly the duration and type of day that the booking covered did not
+differ between cancelled and uncanceled reservations. A long stay over
 a weekend seem just as likely to be cancelled as a short business trip during
 the week.
 
@@ -127,14 +127,14 @@ factor_plot
 ```
 
 Although many different types of bookings are represented in the data,
-there is little separation in proportion that get cancelled. Bookings in made
+there is little separation in the proportion that get cancelled. Bookings in made
 Portugal are cancelled at a higher rate than any other country. The majority
 of these cancellation happened during the fall of 2015, which may indicate an
 event effected the country resulting cancellations; however, there were other
 time period with high rates of cancellations from Portugal. Strangely, the
 data seem to indicate that reservations that were made with a non-refundable
 deposit are more likely to be canceled. Smaller effects that can be seen
-on the above plot are that Groups are more likely to cancel, while, direct
+on the above plot are: Groups are more likely to cancel, while, direct
 bookings are less likely to be cancelled.
 
 ```{r Figure 2, echo = F, fig.cap = caption}
@@ -170,9 +170,9 @@ is very little separation on the basis of hotel.
 
 # Modeling Methodology
 The data was initially split into a training data set and a testing data set
-(70% and 30% of the raw data respectively). Although some factors had a NULL
-level, it was generally meaningful as opposed to missing. For example, the
-majority of the agent data was NULL, but this was taken to mean that the
+(70% and 30% of the raw data respectively). Although some factors had `NULL`
+entries, it was generally meaningful as opposed to missing. For example, the
+majority of the agent data was `NULL`, but this was taken to mean that the
 customer simply booked a hotel without using an agent.
 
 The `reservation_status`
@@ -182,7 +182,7 @@ variable, the cancellation status, and therefore unlikely to be known prior
 to the actual cancellation. Although `reservation_status_date` is not perfectly
 correlated to the outcome, it is impossible to separate the intermediate
 status updates from the final outcome. The inclusion of this predictor in the
-model would most likely result in a high optimistic error rate.
+model would most likely result in a highly optimistic error rate.
 
 Additional,
 all factors were converted into $n-1$ dummy variables. Then, near-zero-variance
@@ -210,8 +210,8 @@ The overall accuracy of the standard logistic regression model (combined model)
 was $0.815$. Model metrics were revaluate by hotel to make a direct comparison
 to the split model. Although, the metrics are close, the combined model
 dominates the split model in accuracy across both groups. This is mostly likely
-to the higher data utilization of the combined model. This might also be the
-result of the two hotels having a very similar distribution of features.
+due to the higher data utilization of the combined model. This might also be the
+result of the two hotels having a very similar distributions of features.
 
 ```{r Figure 3, echo = F, fig.cap = caption}
 #| out.width = '70%',
@@ -227,15 +227,15 @@ requests. Based on the sign of the associated coefficients  bookings from
 Portugal were more likely to be cancel, while the more special requests a
 customer made the less likely they were to cancel (for a full list of
 model coefficients refer the the *Appendix*). Interesting various agent
-variables were flag as significant to the model despite the significant dispersion
+variables were flag as significant to the model despite the high dispersion
 of agents with most having a low level of separation between the canceled and
 uncanceled bookings.
 
 # Conclusion
 The overall goal of this analysis was to produce a predictive model that could
-estimate the probability on a client cancelling a bookings with a high degree
-of accuracy. The ultimate model chosen as a standard logistic regression model.
-The final model had a test accuracy of 80.5%. During the exploratory data analysis
+estimate the probability of a client cancelling a bookings with a high degree
+of accuracy. The ultimate model chosen was a standard logistic regression model.
+The final model had a test accuracy of 81.5%. During the exploratory data analysis
 the implication of several variables on the ultimate outcome were hypothesized.
 Many on these hypothesizes were consistent with the model coefficients. For
 example the model predicts a greater cancellation rate for customers with a
@@ -245,8 +245,8 @@ from Portugal made during the fall of 2015. It is possible that this trend
 will continue into the future, but exigent circumstances should be identified
 to increase the applicability of the model on future data. Second, the data seems
 to indicate that bookings made with a non-refundable deposit are more likely to
-be canceled. This seems logical backwards, as it is usually the case that
-customers are less likely to forego a partial prepaid room.
+be canceled. This seems logically backwards, as it is usually the case that
+customers are less likely to forego a partially prepaid room.
 
 \pagebreak
 
